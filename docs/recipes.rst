@@ -231,17 +231,17 @@ required settings. For example, CONUS404 pressure interpolation needs ``P`` and
      rotate_vectors:
        vector_pairs: [[u10, v10]]                      # Required; grid-relative Lambert GRIB winds
      layers_to_pressure:                               # Replay atmosphere or CONUS404
-       variables: {tmp: t}                             # Required input-to-output names
-       levels_hpa: [500, 850]                          # Required distinct positive integers <= 1100
-       pressure_var: pressfc                           # Surface pressure in Pa (PSFC for CONUS404)
-       temperature_var: tmp                            # Replay support: K
-       humidity_var: spfh                              # Replay support: kg/kg
-       thickness_var: delz                             # Replay support: negative layer thickness, m
-       below_ground: mask                              # Only mask supported
+       variables: {tmp: t}                             # Replay/CONUS404: required input-to-output names
+       levels_hpa: [500, 850]                          # Replay/CONUS404: distinct positive integers <= 1100
+       pressure_var: pressfc                           # For Replay; use PSFC for CONUS404 (Pa)
+       temperature_var: tmp                            # For Replay: temperature (K)
+       humidity_var: spfh                              # For Replay: specific humidity (kg/kg)
+       thickness_var: delz                             # For Replay: negative layer thickness (m)
+       below_ground: mask                              # Replay/CONUS404: only mask supported
        level_name: level
        interface_name: phalf
-       layer2pressure_support_var: null                # Set P for CONUS404 (3D pressure in Pa)
-       keep_variables: []                              # Use [PSFC] to keep CONUS404 surface pressure
+       layer2pressure_support_var: null                # For CONUS404: set P (Pa); leave null for Replay
+       keep_variables: []                              # Replay/CONUS404: retain surface fields, e.g. [PSFC] for CONUS404
      fv_vertical_regrid:
        weight_var: delz                                # Required layer-weight variable
        interfaces: [1, 10, 20]                         # Required increasing target boundaries
@@ -269,16 +269,26 @@ required settings. For example, CONUS404 pressure interpolation needs ``P`` and
 
 ``layers_to_pressure`` interpolates fields to specific pressure levels, such as
 500 and 850 hPa, using linear interpolation in log-pressure. It does not average
-layers. Replay needs its full native column and the listed support variables;
-CONUS404 uses ``P`` and ``PSFC``. To keep CONUS404 surface pressure in the output,
-set ``keep_variables: [PSFC]``. Otherwise, ``PSFC`` is used for interpolation and
+layers. Replay calculates layer pressure from the complete 127-level native
+column using ``pressfc``, ``tmp``, ``spfh``, and ``delz``. CONUS404 already provides
+layer pressure in ``P``, so set ``layer2pressure_support_var: P`` and
+``pressure_var: PSFC`` instead. This path does not require Replay's full column,
+but the selected layers must bracket the requested pressure levels.
+The choice depends on whether layer pressures are supplied or must be calculated.
+Replay and CONUS404 are the current recipe sources for these two paths.
+
+To keep CONUS404 surface pressure in the output, set ``keep_variables: [PSFC]``.
+Otherwise, ``PSFC`` is used for interpolation and
 then dropped. See :ref:`replay-pressure-levels` and :ref:`conus404-pressure-levels`.
 
 ``fv_vertical_regrid`` instead combines native layers into broader layers bounded
 by ``interfaces``. It computes a weighted average in each layer using
 ``weight_var`` (for example, ``delz``), and labels the result with the boundary
-midpoint. It does not interpolate to pressure surfaces. The ocean version uses
-native layer thicknesses and accounts for the wet water column. Bins use
+midpoint. Use it, for example, to reduce the number of vertical channels for
+model training while retaining a layer-average temperature or humidity field.
+Choose ``layers_to_pressure`` instead when you need values on specific pressure
+surfaces. The ocean version uses native layer thicknesses and accounts for the
+wet water column. Bins use
 ``(lower, upper]`` boundaries; retained weights are nominal sums, unaffected by
 ``valid_mask``.
 
@@ -303,9 +313,11 @@ target
 ======
 
 Choose ``base`` for named variables and dimensions, ``anemoi`` for the packed
-training layout, or ``anemoi_inference_with_forcings`` for initial conditions
-and future forcings. The names ``analysis`` and ``forecast`` are aliases for
-``base``. See :doc:`base_target` and :doc:`anemoi_target` for details.
+training layout, or ``anemoi_inference_with_forcings`` to prepare inputs for
+running a trained Anemoi-based model in operations. The inference target reads
+the initial conditions needed to initialize the model and computes forcings for
+future times. The names ``analysis`` and ``forecast`` are aliases for ``base``.
+See :doc:`base_target` and :doc:`anemoi_target` for details.
 
 .. code-block:: yaml
 
@@ -323,7 +335,12 @@ and future forcings. The names ``analysis`` and ``forecast`` are aliases for
 Keep sample chunks at ``1``: ``time`` for analyses, ``t0``/``fhr`` for forecasts,
 plus ``member`` for GEFS. Anemoi uses
 ``chunks: {time: 1, variable: -1, ensemble: 1, cell: -1}``.
-Chunks change storage, not data selection or grid resolution.
+Chunks split each array into blocks stored separately in Zarr. Smaller chunks
+let you read a small region without loading the whole field, but create more
+blocks to store and read. Larger chunks reduce that overhead but use more memory
+when loaded. ``latitude: -1`` and ``longitude: -1``, for example, keep a whole
+horizontal field in one chunk when the other dimensions have chunk size 1.
+Changing chunks does not change the selected data or grid resolution.
 
 Additional Anemoi options (defaults shown):
 
