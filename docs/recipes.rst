@@ -3,10 +3,19 @@
 Recipes
 #######
 
-Start with an `integration recipe <https://github.com/NOAA-PSL/ufs2arco/tree/main/tests/integration>`_
-and edit the sections below. Examples are option references: keep only settings
-accepted by your chosen source, transforms, and target. Run with
-``ufs2arco recipe.yaml``; see :doc:`moving_data` for MPI and resuming.
+The `integration recipes <https://github.com/NOAA-PSL/ufs2arco/tree/main/tests/integration>`_
+use these sections:
+
+* ``mover``: execution, batching, and restarting.
+* ``directories``: output, cache, and log paths.
+* ``source``: input dataset and data selection.
+* ``transforms``: operations applied to the selected data.
+* ``target``: output layout and chunk sizes.
+* ``attrs``: global metadata for the output dataset.
+
+Use the integration recipes as examples. The sections below list the configurable
+options; keep those supported by your chosen source, transforms, and target.
+See :doc:`moving_data` for running recipes.
 
 mover
 =====
@@ -18,8 +27,8 @@ mover
      batch_size: 1         # Required for serial; omit for MPI (one sample per rank)
      start: 0              # Zero-based batch index; nonzero resumes an existing store
 
-A sample is one combination of ``time``, or ``t0``/``fhr``/``member``. For MPI,
-set ``name: mpidatamover`` and launch with ``mpirun -n 4 ufs2arco recipe.yaml``.
+If a job stops at its wall-clock limit, set ``start`` to the first unfinished
+batch's zero-based index and rerun the same recipe to continue writing to the existing store.
 
 .. _recipe-directories:
 
@@ -76,7 +85,7 @@ Choose one registered ``name`` and its required selectors:
      - :doc:`replay`
    * - ``gcs_replay_ocean``
      - ``time``, ``uri``
-     - :ref:`replay-ocean`
+     - :doc:`replay`
 
 For example, these are GFS selectors and the optional shared selection settings:
 
@@ -86,9 +95,9 @@ For example, these are GFS selectors and the optional shared selection settings:
      name: gfs_archive
      t0: {start: "2022-01-01T00", end: "2022-01-01T12", freq: 12h}
      fhr: {start: 0, end: 6, step: 6}
-     variables: [t2m, t]              # Source names; include transform support fields
-     levels: [500, 850]              # Coordinate values, not interpolation
-     use_nearest_levels: false       # Default true only for Replay ocean
+     variables: [t2m, t]              # Source variable names
+     levels: [500, 850]              # Select existing 500 and 850 hPa pressure levels
+     use_nearest_levels: false       # true selects the nearest available level
      slices:
        sel:                         # Coordinate bounds, inclusive
          latitude: [30, 50]
@@ -97,16 +106,19 @@ For example, these are GFS selectors and the optional shared selection settings:
 
 ``time``/``t0`` accepts `pandas.date_range options <https://pandas.pydata.org/docs/reference/api/pandas.date_range.html>`_
 including ``start``, ``end``, ``freq``, ``periods``, and ``inclusive`` (default
-``both``). Quote dates and use the archive's available timestamps/cadence.
+``both``). Quote dates; each archive's available dates and cadence are listed
+on its source page linked above.
 ``fhr``/``member`` requires integer ``start``, ``end``, ``step``; end is included
 when reached. GEFS member ``0`` is the control. Anemoi requires one forecast hour.
 
 ``variables`` may be omitted to select all fields for cloud sources; set it
 explicitly for GRIB sources. Omit ``levels`` to retain all levels: pressure
 archives use hPa, Replay atmosphere native hybrid levels, Replay ocean meters,
-and CONUS404 native indices. Keep full columns for pressure/ocean diagnostics.
-Slices accept ``[start, stop, step]`` and ``null`` bounds. Two-bound latitude
-``sel`` handles reversed coordinates; use horizontal ``isel`` for HRRR/CONUS404
+and CONUS404 native indices. With ``use_nearest_levels: true``, a request for
+840 hPa selects 850 hPa if that is the nearest available level. The default is
+``false``, except for Replay ocean (``true``). Keep full columns for pressure/ocean
+diagnostics. Slices accept ``[start, stop, step]`` and ``null`` bounds. Two-bound
+latitude ``sel`` handles reversed coordinates; use horizontal ``isel`` for HRRR/CONUS404
 and include staggered dimensions where needed (see :doc:`conus404`).
 
 Additional source-specific keys (omit elsewhere):
