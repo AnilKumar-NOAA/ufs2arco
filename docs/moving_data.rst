@@ -32,8 +32,7 @@ Note also that the yaml recipe was inspired by
 `anemoi-datasets <https://anemoi.readthedocs.io/projects/datasets/en/latest/>`_
 in spirit, but the actual format and capabilities are a bit different.
 
-See :doc:`recipes` for a complete recipe, the shared configuration options, and
-downloadable examples for each source and target layout.
+See :doc:`recipes` for YAML configuration options and links to example recipes.
 
 
 Missing Data
