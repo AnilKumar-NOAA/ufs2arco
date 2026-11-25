@@ -13,9 +13,9 @@ use these sections:
 * ``target``: output layout and chunk sizes.
 * ``attrs``: global metadata for the output dataset.
 
-Use the integration recipes as examples. The sections below list the configurable
-options; keep those supported by your chosen source, transforms, and target.
-See :doc:`moving_data` for running recipes.
+Use an integration recipe as a starting point, then use the options below to
+adjust it for your data. Some options apply only to particular sources or targets.
+See :doc:`moving_data` for how to run a recipe.
 
 mover
 =====
@@ -27,16 +27,17 @@ mover
      batch_size: 1         # Required for serial; omit for MPI (one sample per rank)
      start: 0              # Zero-based batch index; nonzero resumes an existing store
 
-If a job stops at its wall-clock limit, set ``start`` to the first unfinished
-batch's zero-based index and rerun the same recipe to continue writing to the existing store.
+If your job runs out of wall-clock time, set ``start`` to the first unfinished
+batch and rerun the same recipe to continue from there. Batch numbering starts at 0.
 
 .. _recipe-directories:
 
 directories
 ===========
 
-All three paths are required. Use dedicated paths for each conversion. Relative
-paths use the working directory; environment variables expand, but ``~`` does not.
+Set all three paths, using separate directories for each conversion. Relative
+paths start from the directory where you run the command. You can use environment
+variables in these paths, but ``~`` is not expanded.
 
 .. code-block:: yaml
 
@@ -50,7 +51,7 @@ paths use the working directory; environment variables expand, but ``~`` does no
 source
 ======
 
-Choose one registered ``name`` and its required selectors:
+Set ``name`` to one of the sources below and provide its required options:
 
 .. list-table::
    :header-rows: 1
@@ -87,7 +88,7 @@ Choose one registered ``name`` and its required selectors:
      - ``time``, ``uri``
      - :doc:`replay`
 
-For example, these are GFS selectors and the optional shared selection settings:
+For example, this selects GFS temperature at two pressure levels over a region:
 
 .. code-block:: yaml
 
@@ -106,22 +107,28 @@ For example, these are GFS selectors and the optional shared selection settings:
 
 ``time``/``t0`` accepts `pandas.date_range options <https://pandas.pydata.org/docs/reference/api/pandas.date_range.html>`_
 including ``start``, ``end``, ``freq``, ``periods``, and ``inclusive`` (default
-``both``). Quote dates; each archive's available dates and cadence are listed
-on its source page linked above.
-``fhr``/``member`` requires integer ``start``, ``end``, ``step``; end is included
-when reached. GEFS member ``0`` is the control. Anemoi requires one forecast hour.
+``both``). Put dates in quotes. The source pages linked above list each archive's
+available dates and time intervals.
 
-``variables`` may be omitted to select all fields for cloud sources; set it
-explicitly for GRIB sources. Omit ``levels`` to retain all levels: pressure
-archives use hPa, Replay atmosphere native hybrid levels, Replay ocean meters,
-and CONUS404 native indices. With ``use_nearest_levels: true``, a request for
+For ``fhr`` and ``member``, provide integer ``start``, ``end``, and ``step`` values.
+The end value is included if the step reaches it. GEFS member ``0`` is the control
+member. For Anemoi output, select just one forecast hour.
+
+List the source fields you want in ``variables``. Cloud sources read all fields
+if you leave it out; GRIB sources need an explicit list. Leave out ``levels`` to
+keep all available levels. Level values are in hPa for pressure archives, native
+hybrid levels for Replay atmosphere, meters for Replay ocean, and native layer
+indices for CONUS404. With ``use_nearest_levels: true``, a request for
 840 hPa selects 850 hPa if that is the nearest available level. The default is
 ``false``, except for Replay ocean (``true``). Keep full columns for pressure/ocean
-diagnostics. Slices accept ``[start, stop, step]`` and ``null`` bounds. Two-bound
-latitude ``sel`` handles reversed coordinates; use horizontal ``isel`` for HRRR/CONUS404
-and include staggered dimensions where needed (see :doc:`conus404`).
+diagnostics.
 
-Additional source-specific keys (omit elsewhere):
+Slices also accept ``[start, stop, step]`` and ``null`` for an open bound.
+Latitude ``sel`` slices with two bounds work with ascending or descending
+coordinates. Use horizontal ``isel`` slices for HRRR and CONUS404, including
+staggered dimensions where needed (see :doc:`conus404`).
+
+The following options apply only to the sources noted in the comments:
 
 .. code-block:: yaml
 
@@ -146,19 +153,21 @@ intervals; see :ref:`cloud-zarr-accumulation`.
 For multiple sources, replace ``source`` with ``multisource:`` containing a list
 of entries, each with ``source`` and optional ``transforms``/``target`` mappings;
 see `replay.anemoi.yaml <https://github.com/NOAA-PSL/ufs2arco/blob/main/tests/integration/replay.anemoi.yaml>`_.
-Use an Anemoi target, matching sample coordinates/batch counts and horizontal
-grids, and distinct channel names. Common transforms override each entry's same
-transform key; entry target values override common target values. Overrides
-replace whole values, not nested keys. Only the first entry computes forcings.
+This requires an Anemoi target. The sources must have matching sample coordinates,
+batch counts, and horizontal grids, with different output channel names.
+Top-level transforms take precedence over the same transform in a source entry.
+An entry's target settings take precedence over the top-level target settings.
+Each override replaces the whole value, including any nested options. Forcings
+are computed for the first entry only.
 
 .. _recipe-transforms:
 
 transforms
 ==========
 
-Optional. Keep only needed operations. They run in the order shown below,
-regardless of YAML order. Example values illustrate syntax; comments give
-defaults and requirements. Keep support fields selected until their transform.
+Add the transforms you need from the options below. They run in the order shown,
+regardless of their order in the YAML file. The comments identify defaults and
+required settings. Include any source fields needed by your transforms.
 
 .. code-block:: yaml
 
@@ -246,17 +255,18 @@ retained weights are nominal sums, unaffected by ``valid_mask``.
 (e.g. ``periodic``, ``unmapped_to_nan``, ``ignore_degenerate``, ``parallel``,
 ``extrap_method``, ``extrap_dist_exponent``, ``extrap_num_src_pnts``).
 ``open_target_kwargs`` accepts `xarray.open_dataset options <https://docs.xarray.dev/en/stable/generated/xarray.open_dataset.html>`_.
-Use weights for the selected grids; filenames based only on grid sizes can collide.
+Use a separate weights file for each pair of grids. Grids with the same sizes
+can have different coordinates.
 
 .. _recipe-target:
 
 target
 ======
 
-Choose ``base`` (named dimensions/variables; aliases ``analysis``, ``forecast``),
-``anemoi`` (packed training layout), or ``anemoi_inference_with_forcings``
-(initial conditions plus future forcings). See :doc:`base_target` and
-:doc:`anemoi_target`.
+Choose ``base`` for named variables and dimensions, ``anemoi`` for the packed
+training layout, or ``anemoi_inference_with_forcings`` for initial conditions
+and future forcings. The names ``analysis`` and ``forecast`` are aliases for
+``base``. See :doc:`base_target` and :doc:`anemoi_target` for details.
 
 .. code-block:: yaml
 
@@ -322,8 +332,8 @@ add ``static_mask``; see :doc:`static_masks`.
 attrs
 =====
 
-Optional global metadata; arbitrary descriptive keys are accepted. Avoid
-replacing generated recipe, missing-data, or target metadata.
+Use ``attrs`` to add global metadata to the output. You can choose your own keys,
+but avoid overwriting metadata generated by ufs2arco.
 
 .. code-block:: yaml
 
