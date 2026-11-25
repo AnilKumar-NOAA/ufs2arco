@@ -3,8 +3,7 @@
 Recipes
 #######
 
-The `integration recipes <https://github.com/NOAA-PSL/ufs2arco/tree/main/tests/integration>`_
-use these sections:
+ufs2arco recipes use the following sections:
 
 * ``mover``: execution, batching, and restarting.
 * ``directories``: output, cache, and log paths.
@@ -13,9 +12,10 @@ use these sections:
 * ``target``: output layout and chunk sizes.
 * ``attrs``: global metadata for the output dataset.
 
-Use an integration recipe as a starting point, then use the options below to
-adjust it for your data. Some options apply only to particular sources or targets.
-See :doc:`moving_data` for how to run a recipe.
+You can find examples in the `integration YAML files <https://github.com/NOAA-PSL/ufs2arco/tree/main/tests/integration>`_.
+Use one as a starting point, then adjust it with the options below. Some options
+apply only to particular sources or targets. See :doc:`moving_data` for how to
+run a recipe.
 
 mover
 =====
@@ -27,8 +27,9 @@ mover
      batch_size: 1                 # Required for serial; omit for MPI (one sample per rank)
      start: 0                      # Zero-based batch index; nonzero resumes an existing store
 
-If your job runs out of wall-clock time, set ``start`` to the first unfinished
-batch and rerun the same recipe to continue from there. Batch numbering starts at 0.
+Restarting is useful when a job runs out of wall time but would otherwise have
+finished successfully. Set ``start`` to the first unfinished batch and rerun the
+same recipe to continue from there. Batch numbering starts at 0.
 
 .. _recipe-directories:
 
@@ -112,7 +113,8 @@ available dates and time intervals.
 
 For ``fhr`` and ``member``, provide integer ``start``, ``end``, and ``step`` values.
 The end value is included if the step reaches it. GEFS member ``0`` is the control
-member. Anemoi does not currently support multiple forecast hours in one source.
+member. The ufs2arco Anemoi target does not currently support multiple forecast
+hours in one source.
 Use initial conditions (``fhr: {start: 0, end: 0, step: 1}``) or a single lead
 time, such as ``fhr: {start: 6, end: 6, step: 1}``.
 
@@ -122,8 +124,8 @@ keep all available levels. Level values are in hPa for pressure archives, native
 hybrid levels for Replay atmosphere, meters for Replay ocean, and native layer
 indices for CONUS404. With ``use_nearest_levels: true``, a request for
 840 hPa selects 850 hPa if that is the nearest available level. The default is
-``false``, except for Replay ocean (``true``). Keep full columns for pressure/ocean
-diagnostics.
+``false``, except for Replay ocean (``true``). Keep full columns for Replay
+pressure interpolation and ocean diagnostics.
 
 Slices also accept ``[start, stop, step]`` and ``null`` for an open bound.
 Latitude ``sel`` slices with two bounds work with ascending or descending
@@ -160,6 +162,12 @@ transforms, or read different archives:
   processing. For example, `replay.anemoi.yaml <https://github.com/NOAA-PSL/ufs2arco/blob/main/tests/integration/replay.anemoi.yaml>`_
   applies a log transform to humidity in one entry and handles temperature in
   another.
+* Another use case is combining temperature initial conditions with accumulated
+  precipitation from an earlier forecast. Temperature at ``t0: 2022-01-01T00``
+  and ``fhr: 0`` has the same valid time as precipitation at
+  ``t0: 2021-12-31T18`` and ``fhr: 6``. Shift the precipitation initialization
+  range back six hours so the valid times match. This needs valid-time alignment;
+  see the current CLI restriction below.
 * To combine different archives, such as Replay atmosphere and Replay ocean,
   bring their fields onto the same horizontal grid before merging. Matching
   resolution alone is not enough: coordinates and cell ordering must also match.
@@ -177,11 +185,12 @@ own ``source`` and may have ``transforms`` and ``target`` settings. The rules ar
   the whole value, including nested options.
 * Forcings are computed for the first entry only.
 
-The current driver does not align different initialization times or forecast
-hours. Combining initial-condition fields with precipitation from a previous
-initialization's six-hour forecast is therefore not supported. GFS and ERA5
-also cannot be combined directly: GFS uses ``t0``/``fhr`` sample dimensions,
-while ERA5 uses ``time``.
+.. note::
+
+   The lagged-precipitation example explains how the valid times should line up.
+   The current CLI compatibility check still requires identical ``t0`` and
+   ``fhr`` values across entries, so it rejects that configuration even when
+   the valid times match. It needs a code change before this example can run.
 
 .. _recipe-transforms:
 
@@ -196,83 +205,86 @@ required settings. For example, CONUS404 pressure interpolation needs ``P`` and
 .. code-block:: yaml
 
    transforms:
-     destagger: {Z: level, U: longitude, V: latitude}  # Currently only applicable to CONUS404
-     multiply: {variable: 1000}                        # Scalar or broadcastable array
-     divide: {variable: 9.80665}                       # Scaling does not update units
-     ocean_density:                                    # Replay ocean; defaults shown
+     destagger:                            # Currently only applicable to CONUS404
+       Z: level
+       U: longitude
+       V: latitude
+     multiply: {variable: 1000}            # Scalar or broadcastable array
+     divide: {variable: 9.80665}           # Scaling does not update units
+     ocean_density:                        # Replay ocean; defaults shown
        temperature: temp
        salinity: so
        name: rho
-       ref_pressure: 0.0                               # Pa; null for approximate in-situ pressure
+       ref_pressure: 0.0                   # Pa; null for approximate in-situ pressure
        subtract_1000: false
-       eos: wright                                     # wright/wright_full (also null), or wright_red
-     mixed_layer_depth:                                # Replay ocean; defaults shown
+       eos: wright                         # wright/wright_full (also null), or wright_red
+     mixed_layer_depth:                    # Replay ocean; defaults shown
        temperature: temp
        salinity: so
-       thresholds: [0.03]                              # Positive kg/m3; scalar or list
-       names: null                                     # Default mld; multiple thresholds need explicit names
-       ref_pressure: 0.0                               # Only 0 supported
+       thresholds: [0.03]                  # Positive kg/m3; scalar or list
+       names: null                         # Default mld; multiple thresholds need explicit names
+       ref_pressure: 0.0                   # Only 0 supported
        eos: wright
        pathological_to_nan: true
-       mld_search_depth: 200.0                         # m; these five keys validate the native grid
+       mld_search_depth: 200.0             # m; these five keys validate the native grid
        min_levels_in_search: 10
-       max_level_spacing: 25.0                         # m
-       expected_level_count: 75                        # null disables count check
-       minimum_deepest_level: 5000.0                   # m; null disables depth check
-     ocean_heat_content:                               # Replay ocean; defaults shown
+       max_level_spacing: 25.0             # m
+       expected_level_count: 75            # null disables count check
+       minimum_deepest_level: 5000.0       # m; null disables depth check
+     ocean_heat_content:                   # Replay ocean; defaults shown
        temperature: temp
-       depths: [700, 2000, null]                       # m; null means local bottom
-       names: null                                     # Auto names; otherwise one name per depth
-       interfaces: null                                # Native boundaries; null reconstructs from centers
-       rho0: 1035.0                                    # kg/m3
-       heat_capacity: 3991.86795711963                 # J/(kg K)
+       depths: [700, 2000, null]           # m; null means local bottom
+       names: null                         # Auto names; otherwise one name per depth
+       interfaces: null                    # Native boundaries; null reconstructs from centers
+       rho0: 1035.0                        # kg/m3
+       heat_capacity: 3991.86795711963     # J/(kg K)
        require_full_depth: true
-       output_units: GJ m-2                            # GJ m-2 or J m-2
+       output_units: GJ m-2                # GJ m-2 or J m-2
      rotate_vectors:
-       vector_pairs: [[u10, v10]]                      # Required; grid-relative Lambert GRIB winds
-     layers_to_pressure:                               # Replay atmosphere or CONUS404
-       variables: {tmp: t}                             # Replay/CONUS404: required input-to-output names
-       levels_hpa: [500, 850]                          # Replay/CONUS404: distinct positive integers <= 1100
-       pressure_var: pressfc                           # For Replay; use PSFC for CONUS404 (Pa)
-       temperature_var: tmp                            # For Replay: temperature (K)
-       humidity_var: spfh                              # For Replay: specific humidity (kg/kg)
-       thickness_var: delz                             # For Replay: negative layer thickness (m)
-       below_ground: mask                              # Replay/CONUS404: only mask supported
+       vector_pairs: [[u10, v10]]          # Required; grid-relative Lambert GRIB winds
+     layers_to_pressure:                   # Replay atmosphere or CONUS404
+       variables: {tmp: t}                 # Replay/CONUS404: required input-to-output names
+       levels_hpa: [500, 850]              # Replay/CONUS404: distinct positive integers <= 1100
+       pressure_var: pressfc               # For Replay; use PSFC for CONUS404 (Pa)
+       temperature_var: tmp                # For Replay: temperature (K)
+       humidity_var: spfh                  # For Replay: specific humidity (kg/kg)
+       thickness_var: delz                 # For Replay: negative layer thickness (m)
+       below_ground: mask                  # Replay/CONUS404: only mask supported
        level_name: level
        interface_name: phalf
-       layer2pressure_support_var: null                # For CONUS404: set P (Pa); leave null for Replay
-       keep_variables: []                              # Replay/CONUS404: retain surface fields, e.g. [PSFC] for CONUS404
+       layer2pressure_support_var: null    # For CONUS404: set P (Pa); leave null for Replay
+       keep_variables: []                  # Replay/CONUS404: retain surface fields, e.g. [PSFC] for CONUS404
      fv_vertical_regrid:
-       weight_var: delz                                # Required layer-weight variable
-       interfaces: [1, 10, 20]                         # Required increasing target boundaries
+       weight_var: delz                    # Required layer-weight variable
+       interfaces: [1, 10, 20]             # Required increasing target boundaries
        use_nearest_interfaces: false
        keep_weight_var: false
-       valid_mask: null                                # Optional broadcastable boolean/array, not a variable name
-     fv_vertical_regrid_ocean:                         # Replay ocean; requires field named temp
-       interfaces: [0, 100, 500]                       # Required depth boundaries, m
+       valid_mask: null                    # Optional broadcastable boolean/array, not a variable name
+     fv_vertical_regrid_ocean:             # Replay ocean; requires field named temp
+       interfaces: [0, 100, 500]           # Required depth boundaries, m
        weight_var: dz
        use_nearest_interfaces: true
        keep_weight_var: false
-       source_interfaces: null                         # Optional native boundaries; overrides inferred ones
-     horizontal_regrid:                                # Requires xESMF and an existing target grid
-       target_grid_path: /path/to/grid.nc              # Required; environment variables expand
-       regridder_kwargs:                               # Required; forwarded to xesmf.Regridder
-         method: bilinear                              # Required
-         filename: /path/to/weights.nc                 # Optional; default uses method/grid sizes
-         reuse_weights: true                           # Default true if file exists; false if absent
-       open_target_kwargs: null                        # Optional xarray.open_dataset keyword mapping
+       source_interfaces: null             # Optional native boundaries; overrides inferred ones
+     horizontal_regrid:                    # Requires xESMF and an existing target grid
+       target_grid_path: /path/to/grid.nc  # Required; environment variables expand
+       regridder_kwargs:                   # Required; forwarded to xesmf.Regridder
+         method: bilinear                  # Required
+         filename: /path/to/weights.nc     # Optional; default uses method/grid sizes
+         reuse_weights: true               # Default true if file exists; false if absent
+       open_target_kwargs: null            # Optional xarray.open_dataset keyword mapping
        source_is_on_gaussian_grid: false
      mappings:
-       log: [variable]                                 # Also accepts one name; creates log_<name>
-       round: [mask_variable]                          # Creates round_<name>; removes original
-     rename: {old_name: new_name}                      # Variables/coordinates/dimensions, after other transforms
+       log: [variable]                     # Also accepts one name; creates log_<name>
+       round: [mask_variable]              # Creates round_<name>; removes original
+     rename: {old_name: new_name}          # Variables/coordinates/dimensions, after other transforms
 
 ``layers_to_pressure`` interpolates fields to specific pressure levels, such as
 500 and 850 hPa, using linear interpolation in log-pressure. It does not average
 layers. Replay calculates layer pressure from the complete 127-level native
 column using ``pressfc``, ``tmp``, ``spfh``, and ``delz``. CONUS404 already provides
 layer pressure in ``P``, so set ``layer2pressure_support_var: P`` and
-``pressure_var: PSFC`` instead. This path does not require Replay's full column,
+``pressure_var: PSFC`` instead. This path does not require the full column,
 but the selected layers must bracket the requested pressure levels.
 The choice depends on whether layer pressures are supplied or must be calculated.
 Replay and CONUS404 are the current recipe sources for these two paths.
@@ -364,9 +376,16 @@ Available ``forcings``:
 ``cos_local_time``, ``sin_local_time``, ``cos_solar_zenith_angle``, ``insolation``,
 ``cos_year_progress``, ``sin_year_progress``, ``cos_day_progress``, ``sin_day_progress``.
 
-Mask rules use packed channel names after merging. Without ``static_mask``,
-NaNs in ``mask_from`` determine masked cells per sample. To reuse a fitted mask,
-add ``static_mask``; see :doc:`static_masks`.
+Use a mask when some channels are valid only over part of the grid. For example,
+ocean temperature is missing over land. A rule can use those missing values to
+mask related ocean channels and optionally add an ``ocean_mask`` channel. It
+does not fill missing values or decide which cells are land on its own.
+
+Rules use packed channel names after merging. Without ``static_mask``, the NaNs
+in ``mask_from`` define the mask separately for each sample. Use a fitted
+``static_mask`` when training, validation, and inference should share the same
+spatial domain, even if individual samples have different missing values.
+See :doc:`static_masks` for how to fit and reuse one.
 
 .. code-block:: yaml
 
